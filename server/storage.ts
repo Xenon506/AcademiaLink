@@ -61,28 +61,36 @@ export interface IStorage {
   getForums(courseId?: string): Promise<Forum[]>;
   getForumById(id: string): Promise<Forum | undefined>;
   createForum(forum: InsertForum): Promise<Forum>;
+  updateForum(id: string, updates: Partial<InsertForum>): Promise<Forum>;
+  deleteForum(id: string): Promise<void>;
   getForumThreads(forumId: string): Promise<ForumThread[]>;
   getThreadById(id: string): Promise<ForumThread | undefined>;
   createThread(thread: InsertForumThread): Promise<ForumThread>;
   updateThread(id: string, updates: Partial<InsertForumThread>): Promise<ForumThread>;
+  deleteThread(id: string): Promise<void>;
   getThreadReplies(threadId: string): Promise<ForumReply[]>;
   createReply(reply: InsertForumReply): Promise<ForumReply>;
+  updateReply(id: string, updates: Partial<InsertForumReply>): Promise<ForumReply>;
+  deleteReply(id: string): Promise<void>;
 
   // Assignment operations
   getAssignments(courseId: string): Promise<Assignment[]>;
   getAssignmentById(id: string): Promise<Assignment | undefined>;
   createAssignment(assignment: InsertAssignment): Promise<Assignment>;
   updateAssignment(id: string, updates: Partial<InsertAssignment>): Promise<Assignment>;
+  deleteAssignment(id: string): Promise<void>;
   getSubmissions(assignmentId: string): Promise<Submission[]>;
   getSubmissionByStudentAndAssignment(studentId: string, assignmentId: string): Promise<Submission | undefined>;
   createSubmission(submission: InsertSubmission): Promise<Submission>;
   updateSubmission(id: string, updates: Partial<InsertSubmission>): Promise<Submission>;
+  deleteSubmission(id: string): Promise<void>;
 
   // Document operations
   getDocuments(courseId?: string): Promise<Document[]>;
   getDocumentById(id: string): Promise<Document | undefined>;
   createDocument(document: InsertDocument): Promise<Document>;
   updateDocument(id: string, updates: Partial<InsertDocument>): Promise<Document>;
+  deleteDocument(id: string): Promise<void>;
   getDocumentVersions(documentId: string): Promise<DocumentVersion[]>;
   createDocumentVersion(version: Omit<DocumentVersion, 'id' | 'createdAt'>): Promise<DocumentVersion>;
   incrementDownloadCount(documentId: string): Promise<void>;
@@ -91,6 +99,8 @@ export interface IStorage {
   getMessages(userId: string, courseId?: string): Promise<Message[]>;
   getConversation(senderId: string, receiverId: string): Promise<Message[]>;
   createMessage(message: InsertMessage): Promise<Message>;
+  updateMessage(id: string, updates: Partial<InsertMessage>): Promise<Message>;
+  deleteMessage(id: string): Promise<void>;
   markMessageAsRead(id: string): Promise<void>;
   getUnreadMessageCount(userId: string): Promise<number>;
 
@@ -105,6 +115,8 @@ export interface IStorage {
   // Notification operations
   getNotifications(userId: string): Promise<Notification[]>;
   createNotification(notification: InsertNotification): Promise<Notification>;
+  updateNotification(id: string, updates: Partial<InsertNotification>): Promise<Notification>;
+  deleteNotification(id: string): Promise<void>;
   markNotificationAsRead(id: string): Promise<void>;
   markAllNotificationsAsRead(userId: string): Promise<void>;
 
@@ -226,6 +238,37 @@ export class DatabaseStorage implements IStorage {
     return newForum;
   }
 
+  async updateForum(id: string, updates: Partial<InsertForum>): Promise<Forum> {
+    const [updatedForum] = await db
+      .update(forums)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(forums.id, id))
+      .returning();
+    return updatedForum;
+  }
+
+  async deleteForum(id: string): Promise<void> {
+    await db.transaction(async (tx) => {
+      // First get all thread IDs in this forum
+      const threadIds = await tx.select({ id: forumThreads.id })
+        .from(forumThreads)
+        .where(eq(forumThreads.forumId, id));
+      
+      if (threadIds.length > 0) {
+        const threadIdValues = threadIds.map(t => t.id);
+        // Delete all replies for these threads
+        await tx.delete(forumReplies)
+          .where(inArray(forumReplies.threadId, threadIdValues));
+        
+        // Delete all threads in this forum
+        await tx.delete(forumThreads).where(eq(forumThreads.forumId, id));
+      }
+      
+      // Finally delete the forum
+      await tx.delete(forums).where(eq(forums.id, id));
+    });
+  }
+
   async getForumThreads(forumId: string): Promise<ForumThread[]> {
     return await db.select().from(forumThreads)
       .where(eq(forumThreads.forumId, forumId))
@@ -251,6 +294,15 @@ export class DatabaseStorage implements IStorage {
     return updatedThread;
   }
 
+  async deleteThread(id: string): Promise<void> {
+    await db.transaction(async (tx) => {
+      // Delete all replies in this thread
+      await tx.delete(forumReplies).where(eq(forumReplies.threadId, id));
+      // Delete the thread
+      await tx.delete(forumThreads).where(eq(forumThreads.id, id));
+    });
+  }
+
   async getThreadReplies(threadId: string): Promise<ForumReply[]> {
     return await db.select().from(forumReplies)
       .where(eq(forumReplies.threadId, threadId))
@@ -260,6 +312,37 @@ export class DatabaseStorage implements IStorage {
   async createReply(reply: InsertForumReply): Promise<ForumReply> {
     const [newReply] = await db.insert(forumReplies).values(reply).returning();
     return newReply;
+  }
+
+  async updateReply(id: string, updates: Partial<InsertForumReply>): Promise<ForumReply> {
+    const [updatedReply] = await db
+      .update(forumReplies)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(forumReplies.id, id))
+      .returning();
+    return updatedReply;
+  }
+
+  async deleteReply(id: string): Promise<void> {
+    await db.transaction(async (tx) => {
+      // Helper function to recursively delete replies within the same transaction
+      const deleteReplyTree = async (replyId: string): Promise<void> => {
+        // Get all child replies
+        const childReplies = await tx.select({ id: forumReplies.id })
+          .from(forumReplies)
+          .where(eq(forumReplies.parentId, replyId));
+        
+        // Recursively delete all children first
+        for (const child of childReplies) {
+          await deleteReplyTree(child.id);
+        }
+        
+        // Delete this reply
+        await tx.delete(forumReplies).where(eq(forumReplies.id, replyId));
+      };
+      
+      await deleteReplyTree(id);
+    });
   }
 
   // Assignment operations
@@ -286,6 +369,15 @@ export class DatabaseStorage implements IStorage {
       .where(eq(assignments.id, id))
       .returning();
     return updatedAssignment;
+  }
+
+  async deleteAssignment(id: string): Promise<void> {
+    await db.transaction(async (tx) => {
+      // Delete all submissions for this assignment
+      await tx.delete(submissions).where(eq(submissions.assignmentId, id));
+      // Delete the assignment
+      await tx.delete(assignments).where(eq(assignments.id, id));
+    });
   }
 
   async getSubmissions(assignmentId: string): Promise<Submission[]> {
@@ -317,6 +409,10 @@ export class DatabaseStorage implements IStorage {
     return updatedSubmission;
   }
 
+  async deleteSubmission(id: string): Promise<void> {
+    await db.delete(submissions).where(eq(submissions.id, id));
+  }
+
   // Document operations
   async getDocuments(courseId?: string): Promise<Document[]> {
     const query = db.select().from(documents);
@@ -343,6 +439,15 @@ export class DatabaseStorage implements IStorage {
       .where(eq(documents.id, id))
       .returning();
     return updatedDocument;
+  }
+
+  async deleteDocument(id: string): Promise<void> {
+    await db.transaction(async (tx) => {
+      // Delete all versions for this document
+      await tx.delete(documentVersions).where(eq(documentVersions.documentId, id));
+      // Delete the document
+      await tx.delete(documents).where(eq(documents.id, id));
+    });
   }
 
   async getDocumentVersions(documentId: string): Promise<DocumentVersion[]> {
@@ -394,6 +499,19 @@ export class DatabaseStorage implements IStorage {
   async createMessage(message: InsertMessage): Promise<Message> {
     const [newMessage] = await db.insert(messages).values(message).returning();
     return newMessage;
+  }
+
+  async updateMessage(id: string, updates: Partial<InsertMessage>): Promise<Message> {
+    const [updatedMessage] = await db
+      .update(messages)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(messages.id, id))
+      .returning();
+    return updatedMessage;
+  }
+
+  async deleteMessage(id: string): Promise<void> {
+    await db.delete(messages).where(eq(messages.id, id));
   }
 
   async markMessageAsRead(id: string): Promise<void> {
@@ -498,6 +616,19 @@ export class DatabaseStorage implements IStorage {
   async createNotification(notification: InsertNotification): Promise<Notification> {
     const [newNotification] = await db.insert(notifications).values(notification).returning();
     return newNotification;
+  }
+
+  async updateNotification(id: string, updates: Partial<InsertNotification>): Promise<Notification> {
+    const [updatedNotification] = await db
+      .update(notifications)
+      .set(updates)
+      .where(eq(notifications.id, id))
+      .returning();
+    return updatedNotification;
+  }
+
+  async deleteNotification(id: string): Promise<void> {
+    await db.delete(notifications).where(eq(notifications.id, id));
   }
 
   async markNotificationAsRead(id: string): Promise<void> {
