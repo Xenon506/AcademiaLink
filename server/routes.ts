@@ -502,22 +502,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Set up WebSocket server for real-time chat
   const wss = new WebSocketServer({ 
     server: httpServer, 
-    path: '/ws' 
+    path: '/ws',
+    verifyClient: (info) => {
+      // Allow all connections for now - authentication happens after connection
+      console.log('WebSocket connection attempt from:', info.origin);
+      return true;
+    }
   });
 
   const clients = new Map<string, WebSocket>();
 
   wss.on('connection', (ws, request) => {
-    console.log('New WebSocket connection');
+    console.log('New WebSocket connection established');
+    let authenticated = false;
+    let userId: string | null = null;
+    
+    // Set up authentication timeout
+    const authTimeout = setTimeout(() => {
+      if (!authenticated) {
+        console.log('WebSocket connection timed out - no authentication');
+        ws.close(4000, 'Authentication timeout');
+      }
+    }, 10000); // 10 second timeout
     
     ws.on('message', async (message) => {
       try {
         const data = JSON.parse(message.toString());
         
         if (data.type === 'authenticate') {
+          if (!data.userId) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Missing userId in authentication' }));
+            return;
+          }
+          
+          // Clear authentication timeout
+          clearTimeout(authTimeout);
+          
+          // Store authenticated connection
+          authenticated = true;
+          userId = data.userId;
           clients.set(data.userId, ws);
+          
+          console.log(`WebSocket authenticated for user: ${data.userId}`);
           ws.send(JSON.stringify({ type: 'authenticated', userId: data.userId }));
         } else if (data.type === 'message') {
+          if (!authenticated) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+            return;
+          }
           // Handle real-time message sending
           const newMessage = await storage.createMessage({
             senderId: data.senderId,
@@ -552,13 +584,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     });
 
-    ws.on('close', () => {
+    ws.on('close', (code, reason) => {
+      console.log(`WebSocket connection closed: ${code} ${reason}`);
+      clearTimeout(authTimeout);
+      
       // Remove client from map when disconnected
-      for (const [userId, client] of Array.from(clients.entries())) {
-        if (client === ws) {
-          clients.delete(userId);
-          break;
-        }
+      if (userId) {
+        clients.delete(userId);
+        console.log(`Removed authenticated user ${userId} from clients`);
       }
     });
   });
