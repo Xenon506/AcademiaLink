@@ -40,6 +40,42 @@
         grid-template-columns: repeat(2, 1fr);
         gap: 30px;
     }
+    
+    /* Dashboard specific responsive styles */
+    .dashboard-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .sidebar {
+        transform: translateX(-100%);
+        transition: transform 0.3s;
+        z-index: 1000;
+    }
+    
+    .sidebar.active {
+        transform: translateX(0);
+    }
+    
+    .main-content {
+        margin-left: 0;
+        width: 100%;
+    }
+    
+    .menu-toggle {
+        display: block;
+        position: fixed;
+        top: 20px;
+        left: 20px;
+        z-index: 1001;
+        background: var(--primary);
+        color: white;
+        border: none;
+        border-radius: 5px;
+        width: 40px;
+        height: 40px;
+        font-size: 1.2rem;
+        cursor: pointer;
+    }
 }
 
 @media (max-width: 768px) {
@@ -79,6 +115,27 @@
 
     .social-icons {
         justify-content: center;
+    }
+    
+    /* Dashboard specific responsive styles */
+    .stats-cards {
+        grid-template-columns: 1fr;
+    }
+    
+    .header {
+        padding: 0 15px;
+    }
+    
+    .search-bar {
+        width: 150px;
+    }
+    
+    .user-name {
+        display: none;
+    }
+    
+    .dashboard {
+        padding: 15px;
     }
 }
 
@@ -127,6 +184,26 @@
     .event-date {
         margin-right: 0;
         margin-bottom: 15px;
+    }
+    
+    /* Dashboard specific responsive styles */
+    .search-bar {
+        display: none;
+    }
+    
+    .card-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    
+    .calendar {
+        gap: 2px;
+    }
+    
+    .calendar-day {
+        height: 30px;
+        font-size: 0.8rem;
     }
 }
 
@@ -180,28 +257,4 @@
 
 /* Print styles */
 @media print {
-    header, .hero-buttons, .auth-buttons, footer {
-        display: none !important;
-    }
-    
-    .container {
-        width: 100%;
-        max-width: none;
-    }
-    
-    body {
-        color: black;
-        background: white;
-        font-size: 12pt;
-        line-height: 1.5;
-    }
-    
-    .section-title h2 {
-        color: black;
-    }
-    
-    a {
-        color: black;
-        text-decoration: underline;
-    }
-}
+    header, .hero-buttons, .auth-b
